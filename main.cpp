@@ -12,6 +12,7 @@ public:
     GameBoard() : board(ROWS, std::vector<char>(COLS, ' ')) {}
 
     void displayBoard() {
+        std::cout << "\033[2J\033[H";
         for (const auto& row : board) {
             for (const auto& cell : row)
                 std::cout << (cell == ' ' ? '.' : cell) << "\t";
