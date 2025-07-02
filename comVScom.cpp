@@ -4,10 +4,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <algorithm>
-#include <chrono>
-#include <thread>
-#include <mutex>
-#include <future>
 
 const int ROWS = 6;
 const int COLS = 7;
@@ -70,25 +66,25 @@ public:
     }
 
     bool checkWin(Player player) const {
-        // horizontal
+        // Horizontal
         for (int r = 0; r < ROWS; ++r)
             for (int c = 0; c <= COLS - 4; ++c)
                 if (board[r][c] == player && board[r][c+1] == player &&
                     board[r][c+2] == player && board[r][c+3] == player)
                     return true;
-        // vertical
+        // Vertical
         for (int c = 0; c < COLS; ++c)
             for (int r = 0; r <= ROWS - 4; ++r)
                 if (board[r][c] == player && board[r+1][c] == player &&
                     board[r+2][c] == player && board[r+3][c] == player)
                     return true;
-        // diagonal down-right
+        // Diagonal down-right
         for (int r = 0; r <= ROWS - 4; ++r)
             for (int c = 0; c <= COLS - 4; ++c)
                 if (board[r][c] == player && board[r+1][c+1] == player &&
                     board[r+2][c+2] == player && board[r+3][c+3] == player)
                     return true;
-        // diagonal up-right
+        // Diagonal up-right
         for (int r = 3; r < ROWS; ++r)
             for (int c = 0; c <= COLS - 4; ++c)
                 if (board[r][c] == player && board[r-1][c+1] == player &&
@@ -97,51 +93,18 @@ public:
         return false;
     }
 
-    // New heuristic functions
-    int countStreak(int r, int c, int dr, int dc, Player player) const {
-        int count = 0;
-        for (int i = 0; i < 4; ++i) {
-            int rr = r + dr * i;
-            int cc = c + dc * i;
-            if (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS) {
-                if (board[rr][cc] == player)
-                    count++;
-                else if (board[rr][cc] != None)
-                    return -1; // Blocked by opponent
-            } else {
-                return -1; // Out of bounds
-            }
-        }
-        return count;
-    }
-
     int evaluate(Player aiPlayer, Player humanPlayer) const {
-        if (checkWin(aiPlayer)) return 100000;
-        if (checkWin(humanPlayer)) return -100000;
-
-        int score = 0;
-        for (int r = 0; r < ROWS; ++r) {
-            for (int c = 0; c < COLS; ++c) {
-                // directions: horizontal, vertical, diag down-right, diag up-right
-                static const std::vector<std::pair<int,int>> dirs = {{0,1},{1,0},{1,1},{1,-1}};
-                for (auto [dr, dc] : dirs) {
-                    int aiCount = countStreak(r, c, dr, dc, aiPlayer);
-                    int huCount = countStreak(r, c, dr, dc, humanPlayer);
-                    if (aiCount > 0) score += (1 << aiCount);
-                    if (huCount > 0) score -= (1 << huCount);
-                }
-            }
-        }
-        return score;
+        if (checkWin(aiPlayer)) return 1000;
+        if (checkWin(humanPlayer)) return -1000;
+        return 0;
     }
 
     int minimax(int depth, bool maximizing, Player aiPlayer, Player humanPlayer, int alpha, int beta) {
         int score = evaluate(aiPlayer, humanPlayer);
-        if (depth == 0 || score >= 100000 || score <= -100000 || isFull())
+        if (depth == 0 || score == 1000 || score == -1000 || isFull())
             return score;
-
         if (maximizing) {
-            int maxEval = -1000000;
+            int maxEval = -100000;
             for (int c = 0; c < COLS; ++c) {
                 if (!isValidMove(c)) continue;
                 makeMove(c, aiPlayer);
@@ -153,7 +116,7 @@ public:
             }
             return maxEval;
         } else {
-            int minEval = 1000000;
+            int minEval = 100000;
             for (int c = 0; c < COLS; ++c) {
                 if (!isValidMove(c)) continue;
                 makeMove(c, humanPlayer);
@@ -167,32 +130,19 @@ public:
         }
     }
 
-    int getAIMoveThreaded(Player aiPlayer, Player humanPlayer, int maxDepth = 10, double* timeTaken = nullptr) {
-        int bestScore = -1000000;
+    int getAIMove(Player aiPlayer, Player humanPlayer) {
+        int bestScore = -100000;
         int bestCol = 0;
-        std::mutex mtx;
-        std::vector<std::thread> threads;
-        auto start = std::chrono::high_resolution_clock::now();
-
+        const int MAX_DEPTH = 5;
         for (int c = 0; c < COLS; ++c) {
             if (!isValidMove(c)) continue;
-            threads.emplace_back([&, c]() {
-                GameBoard copy = *this;
-                copy.makeMove(c, aiPlayer);
-                int score = copy.minimax(maxDepth - 1, false, aiPlayer, humanPlayer, -1000000, 1000000);
-                std::lock_guard<std::mutex> lock(mtx);
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestCol = c;
-                }
-            });
-        }
-
-        for (auto &t : threads) if (t.joinable()) t.join();
-
-        if (timeTaken) {
-            auto end = std::chrono::high_resolution_clock::now();
-            *timeTaken = std::chrono::duration<double>(end - start).count();
+            makeMove(c, aiPlayer);
+            int score = minimax(MAX_DEPTH - 1, false, aiPlayer, humanPlayer, -100000, 100000);
+            undoMove(c);
+            if (score > bestScore) {
+                bestScore = score;
+                bestCol = c;
+            }
         }
         return bestCol;
     }
@@ -201,6 +151,7 @@ public:
 int main() {
     std::srand(static_cast<unsigned int>(std::time(nullptr)));
 
+    // Coin flip to decide who starts
     std::cout << "Guess heads or tails to start (type heads/tails): ";
     std::string guess;
     std::cin >> guess;
@@ -210,7 +161,7 @@ int main() {
         std::cin >> guess;
         std::transform(guess.begin(), guess.end(), guess.begin(), ::tolower);
     }
-    int coinFlip = std::rand() % 2;
+    int coinFlip = std::rand() % 2; // 0 heads, 1 tails
     int playerCoinFlip = (guess == "heads") ? 0 : 1;
     std::cout << "Coin flip result: " << (coinFlip == 0 ? "heads" : "tails") << std::endl;
 
@@ -220,8 +171,6 @@ int main() {
     GameBoard game;
     sf::RenderWindow window(sf::VideoMode(COLS * CELL_SIZE, ROWS * CELL_SIZE), "Connect Four");
     bool gameOver = false;
-    bool aiThinking = false;
-    std::future<int> aiFuture;
 
     while (window.isOpen()) {
         sf::Event event;
@@ -230,7 +179,8 @@ int main() {
                 window.close();
 
             if (!gameOver && event.type == sf::Event::MouseButtonPressed && currentPlayer == Human) {
-                int col = event.mouseButton.x / CELL_SIZE;
+                int col = game.getAIMove(Human, AI);
+
                 if (game.makeMove(col, Human)) {
                     if (game.checkWin(Human)) {
                         std::cout << "You win!" << std::endl;
@@ -243,23 +193,13 @@ int main() {
         }
 
         if (!gameOver && currentPlayer == AI) {
-            if (!aiThinking) {
-                aiThinking = true;
-                aiFuture = std::async(std::launch::async, [&]() {
-                    double dummyTime = 0.0;
-                    return game.getAIMoveThreaded(AI, Human, 6, &dummyTime);
-                });
-            } else if (aiFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-                int col = aiFuture.get();
-                game.makeMove(col, AI);
-                std::cout << "AI placed in column " << col << "\n";
-                if (game.checkWin(AI)) {
-                    std::cout << "AI wins!" << std::endl;
-                    gameOver = true;
-                } else {
-                    currentPlayer = Human;
-                }
-                aiThinking = false;
+            int col = game.getAIMove(AI, Human);
+            game.makeMove(col, AI);
+            if (game.checkWin(AI)) {
+                std::cout << "AI wins!" << std::endl;
+                gameOver = true;
+            } else {
+                currentPlayer = Human;
             }
         }
 
